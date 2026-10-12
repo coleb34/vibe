@@ -1,0 +1,661 @@
+<title>Emberdeep</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jacquard+12&family=IBM+Plex+Mono:wght@400;500;700&display=swap">
+<style>
+  /* Layout: one torchlit canvas as the stage, a narrow ledger beside it (stacks under it on phones). */
+  :root {
+    --void: #0d0c13;       /* page and unlit dungeon */
+    --stone: #2b2736;      /* walls, panels */
+    --stone-hi: #3d3750;   /* edges, dividers */
+    --ink: #ddd5c4;        /* text, floor glyphs */
+    --mist: #8b85a1;       /* secondary text */
+    --ember: #f0a23b;      /* torchlight, player, accent */
+    --blood: #d8495c;      /* hp, danger */
+    --moss: #86b46d;       /* healing, good news */
+    --frost: #79b4d8;      /* xp, magic */
+    --display: "Jacquard 12", "Luminari", Georgia, serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    background: var(--void);
+    color: var(--ink);
+    font: 13px/1.5 var(--mono);
+    padding-inline: 16px;
+    padding-block: 16px;
+    box-sizing: border-box;
+  }
+  .game {
+    max-width: 1180px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 16px;
+    align-items: start;
+  }
+  .stage {
+    position: relative;
+    min-width: 0;
+    border: 1px solid var(--stone-hi);
+    background: var(--void);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: clamp(320px, 70vh, 680px); touch-action: none; cursor: crosshair; }
+  canvas:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
+
+  .ledger { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 52px;
+    line-height: .85;
+    margin: 0;
+    color: var(--ember);
+    letter-spacing: .01em;
+    text-shadow: 0 0 18px rgba(240, 162, 59, .35);
+  }
+  .depth { color: var(--mist); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; margin-top: 6px; }
+  .depth b { color: var(--ink); font-weight: 500; }
+
+  .bars { display: grid; gap: 8px; }
+  .bar { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+  .bar span:first-child { color: var(--mist); font-size: 11px; letter-spacing: .08em; }
+  .track { height: 8px; background: var(--stone); border-radius: 2px; overflow: hidden; }
+  .fill { height: 100%; width: 50%; transition: width .2s ease; }
+  .hp .fill { background: var(--blood); }
+  .xp .fill { background: var(--frost); }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--stone-hi); border: 1px solid var(--stone-hi); border-radius: 3px; overflow: hidden; }
+  .stat { background: var(--void); padding: 6px 8px; display: grid; gap: 1px; }
+  .stat span { color: var(--mist); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+  .stat b { font-weight: 500; font-variant-numeric: tabular-nums; font-size: 15px; }
+
+  .kit { display: grid; gap: 4px; font-size: 12px; }
+  .kit div { display: flex; justify-content: space-between; gap: 8px; }
+  .kit span { color: var(--mist); }
+  .kit b { font-weight: 500; text-align: right; }
+
+  .actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  button {
+    font: 500 12px var(--mono);
+    color: var(--ink);
+    background: var(--stone);
+    border: 1px solid var(--stone-hi);
+    border-radius: 3px;
+    padding: 8px 6px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--ember); }
+  button:focus-visible { outline: 2px solid var(--ember); outline-offset: 1px; }
+  button:disabled { opacity: .4; cursor: default; }
+  button kbd { color: var(--ember); font: inherit; }
+
+  .log { display: grid; gap: 3px; font-size: 12px; min-height: 9em; align-content: start; border-top: 1px solid var(--stone-hi); padding-top: 10px; }
+  .log p { margin: 0; color: var(--mist); }
+  .log p.new { color: var(--ink); }
+  .log .bad { color: var(--blood); }
+  .log .good { color: var(--moss); }
+  .log .gold { color: var(--ember); }
+  .log .magic { color: var(--frost); }
+
+  .keys { color: var(--mist); font-size: 11px; line-height: 1.7; border-top: 1px solid var(--stone-hi); padding-top: 10px; }
+  .keys kbd { font: inherit; color: var(--ink); background: var(--stone); padding: 0 4px; border-radius: 2px; }
+  .seed { color: var(--mist); font-size: 11px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+  .pad { display: none; grid-template-columns: repeat(3, 52px); grid-auto-rows: 52px; gap: 6px; justify-content: center; }
+  .pad button { font-size: 18px; padding: 0; }
+  @media (pointer: coarse), (max-width: 820px) { .pad { display: grid; order: -1; } .keys { display: none; } }
+
+  .veil {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    background: rgba(13, 12, 19, .82);
+    padding: 16px;
+  }
+  .veil .card { max-width: 380px; text-align: center; display: grid; gap: 10px; }
+  .veil h2 { font-family: var(--display); font-weight: 400; font-size: 54px; line-height: .9; margin: 0; color: var(--blood); text-wrap: balance; }
+  .veil p { margin: 0; color: var(--mist); }
+  .veil .tally { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .veil button { justify-self: center; padding: 10px 18px; border-color: var(--ember); }
+
+  @media (max-width: 820px) {
+    .game { grid-template-columns: minmax(0, 1fr); }
+    canvas { height: clamp(300px, 56vh, 520px); }
+    h1 { font-size: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
+</style>
+
+<div class="game">
+  <div class="stage">
+    <canvas id="view" tabindex="0" aria-label="Dungeon map. Use arrow keys or tap a direction to move."></canvas>
+    <div class="veil" id="veil" hidden>
+      <div class="card">
+        <h2 id="deathTitle">Snuffed out</h2>
+        <p id="deathCause"></p>
+        <p class="tally" id="deathTally"></p>
+        <p id="deathBest"></p>
+        <button id="again" type="button">Light a new torch <kbd>N</kbd></button>
+      </div>
+    </div>
+  </div>
+
+  <aside class="ledger">
+    <div>
+      <h1>Emberdeep</h1>
+      <div class="depth" id="depth">Depth <b>1</b> · 30 ft below</div>
+    </div>
+
+    <div class="bars">
+      <div class="bar hp"><span>HP</span><div class="track"><div class="fill" id="hpFill"></div></div><span id="hpText">20/20</span></div>
+      <div class="bar xp"><span>XP</span><div class="track"><div class="fill" id="xpFill"></div></div><span id="xpText">0/10</span></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><span>Lvl</span><b id="sLvl">1</b></div>
+      <div class="stat"><span>Atk</span><b id="sAtk">3</b></div>
+      <div class="stat"><span>Def</span><b id="sDef">0</b></div>
+      <div class="stat"><span>Gold</span><b id="sGold">0</b></div>
+    </div>
+
+    <div class="kit">
+      <div><span>Wielding</span><b id="kWeapon">bare fists</b></div>
+      <div><span>Wearing</span><b id="kArmor">rags</b></div>
+      <div><span>Slain</span><b id="kKills">0</b></div>
+    </div>
+
+    <div class="actions">
+      <button id="bQuaff" type="button"><kbd>Q</kbd>uaff <span id="nPot">0</span></button>
+      <button id="bRead" type="button"><kbd>R</kbd>ead <span id="nScr">0</span></button>
+      <button id="bDown" type="button">Down <kbd>&gt;</kbd></button>
+    </div>
+
+    <div class="pad" aria-label="Movement pad">
+      <button type="button" data-d="-1,-1" aria-label="Move up-left">↖</button>
+      <button type="button" data-d="0,-1" aria-label="Move up">↑</button>
+      <button type="button" data-d="1,-1" aria-label="Move up-right">↗</button>
+      <button type="button" data-d="-1,0" aria-label="Move left">←</button>
+      <button type="button" data-d="0,0" aria-label="Wait a turn">·</button>
+      <button type="button" data-d="1,0" aria-label="Move right">→</button>
+      <button type="button" data-d="-1,1" aria-label="Move down-left">↙</button>
+      <button type="button" data-d="0,1" aria-label="Move down">↓</button>
+      <button type="button" data-d="1,1" aria-label="Move down-right">↘</button>
+    </div>
+
+    <div class="log" id="log" aria-live="polite"></div>
+
+    <div class="keys">
+      <kbd>←↑→↓</kbd> <kbd>WASD</kbd> <kbd>hjkl</kbd> move · <kbd>yubn</kbd> diagonals<br>
+      Walk into monsters to fight · <kbd>.</kbd> wait<br>
+      <kbd>Q</kbd> quaff potion · <kbd>R</kbd> read scroll · <kbd>&gt;</kbd> descend · <kbd>Shift N</kbd> new run
+    </div>
+
+    <div class="seed"><span id="seed">Seed —</span><button id="bNew" type="button">New run</button></div>
+  </aside>
+</div>
+
+<script>
+(() => {
+  const W = 60, H = 36, LIGHT = 7.5;
+  const C = {
+    void: "#0d0c13", stone: "#2b2736", stoneHi: "#3d3750", ink: "#ddd5c4", mist: "#8b85a1",
+    ember: "#f0a23b", blood: "#d8495c", moss: "#86b46d", frost: "#79b4d8"
+  };
+
+  const MONSTERS = {
+    rat:      { ch: "r", name: "rat",      hp: 4,  atk: 2, def: 0, xp: 2,  min: 1, col: "#a89a86" },
+    bat:      { ch: "b", name: "cave bat", hp: 3,  atk: 2, def: 0, xp: 2,  min: 1, col: "#9a7fb8", erratic: true },
+    goblin:   { ch: "g", name: "goblin",   hp: 8,  atk: 3, def: 1, xp: 5,  min: 2, col: "#86b46d" },
+    skeleton: { ch: "s", name: "skeleton", hp: 12, atk: 4, def: 2, xp: 8,  min: 3, col: "#e6e0d0" },
+    orc:      { ch: "o", name: "orc",      hp: 18, atk: 6, def: 2, xp: 12, min: 4, col: "#c9763a" },
+    wraith:   { ch: "W", name: "wraith",   hp: 22, atk: 7, def: 3, xp: 18, min: 6, col: "#79b4d8" },
+    troll:    { ch: "T", name: "troll",    hp: 36, atk: 9, def: 4, xp: 30, min: 8, col: "#5f9a6e", regen: true },
+    lich:     { ch: "L", name: "lich",     hp: 48, atk: 12, def: 5, xp: 50, min: 11, col: "#d8495c" }
+  };
+  const WEAPONS = [["dagger", 1], ["short sword", 2], ["mace", 3], ["longsword", 4], ["war axe", 6], ["ember blade", 8]];
+  const ARMORS = [["leather jerkin", 1], ["chain shirt", 2], ["scale mail", 3], ["plate", 4], ["emberforged plate", 6]];
+
+  let G = null, vis = new Set(), dirty = true;
+  const $ = id => document.getElementById(id);
+  const canvas = $("view"), ctx = canvas.getContext("2d");
+
+  // ---------- rng (state lives in G so a snapshot resumes exactly) ----------
+  function rand() {
+    G.rs = (G.rs + 0x6D2B79F5) | 0;
+    let t = G.rs;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const ri = (a, b) => a + Math.floor(rand() * (b - a + 1));
+  const pick = arr => arr[Math.floor(rand() * arr.length)];
+  const idx = (x, y) => y * W + x;
+  const inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+  const tile = (x, y) => inb(x, y) ? G.map[idx(x, y)] : "#";
+  const walkable = (x, y) => tile(x, y) !== "#";
+
+  // ---------- game setup ----------
+  function newGame(seed) {
+    seed = seed ?? Math.floor(Math.random() * 1e9);
+    G = {
+      seed, rs: seed | 0, depth: 0, turn: 0, kills: 0, gold: 0, dead: false, cause: "",
+      p: { x: 0, y: 0, hp: 20, max: 20, atk: 3, def: 0, lvl: 1, xp: 0, weapon: null, armor: null, potions: 1, scrolls: 0 },
+      log: []
+    };
+    descend();
+    say("You light your torch and step into the dark.", "gold");
+    $("veil").hidden = true;
+  }
+
+  function descend() {
+    G.depth++;
+    generate();
+    if (G.depth > 1) say(`You climb down to depth ${G.depth}. The air grows warmer.`, "magic");
+  }
+
+  function generate() {
+    G.map = new Array(W * H).fill("#");
+    G.seen = new Array(W * H).fill(0);
+    G.mons = []; G.items = [];
+    const rooms = [];
+    for (let tries = 0; tries < 120 && rooms.length < 14; tries++) {
+      const w = ri(4, 11), h = ri(3, 7), x = ri(1, W - w - 2), y = ri(1, H - h - 2);
+      if (rooms.some(r => x <= r.x + r.w + 1 && x + w + 1 >= r.x && y <= r.y + r.h + 1 && y + h + 1 >= r.y)) continue;
+      rooms.push({ x, y, w, h, cx: x + (w >> 1), cy: y + (h >> 1) });
+      for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) G.map[idx(i, j)] = ".";
+    }
+    const carve = (a, b) => {
+      let { cx: x, cy: y } = a;
+      const horizFirst = rand() < .5;
+      const stepX = () => { while (x !== b.cx) { x += Math.sign(b.cx - x); G.map[idx(x, y)] = "."; } };
+      const stepY = () => { while (y !== b.cy) { y += Math.sign(b.cy - y); G.map[idx(x, y)] = "."; } };
+      if (horizFirst) { stepX(); stepY(); } else { stepY(); stepX(); }
+    };
+    for (let i = 1; i < rooms.length; i++) carve(rooms[i - 1], rooms[i]);
+    for (let k = 0; k < 3; k++) carve(pick(rooms), pick(rooms)); // a few loops so you can flee
+
+    const start = rooms[0], end = rooms[rooms.length - 1];
+    G.p.x = start.cx; G.p.y = start.cy;
+    G.map[idx(end.cx, end.cy)] = ">";
+
+    const freeSpot = r => {
+      for (let t = 0; t < 20; t++) {
+        const x = ri(r.x, r.x + r.w - 1), y = ri(r.y, r.y + r.h - 1);
+        if (tile(x, y) === "." && !monAt(x, y) && !itemAt(x, y) && !(x === G.p.x && y === G.p.y)) return { x, y };
+      }
+      return null;
+    };
+
+    const pool = Object.keys(MONSTERS).filter(k => MONSTERS[k].min <= G.depth);
+    rooms.slice(1).forEach(r => {
+      const n = ri(0, 1 + Math.min(3, Math.floor(G.depth / 2)));
+      for (let i = 0; i < n; i++) {
+        const s = freeSpot(r); if (!s) continue;
+        // favor monsters close to the current depth
+        const weights = pool.map(k => 1 + Math.max(0, 4 - (G.depth - MONSTERS[k].min)));
+        let roll = rand() * weights.reduce((a, b) => a + b, 0), k = pool[0];
+        for (let j = 0; j < pool.length; j++) { roll -= weights[j]; if (roll <= 0) { k = pool[j]; break; } }
+        const m = MONSTERS[k], scale = 1 + (G.depth - m.min) * 0.1;
+        const hp = Math.round(m.hp * scale);
+        G.mons.push({ x: s.x, y: s.y, k, hp, max: hp, awake: false });
+      }
+    });
+
+    const drop = (k, extra = {}) => { const s = freeSpot(pick(rooms)); if (s) G.items.push({ x: s.x, y: s.y, k, ...extra }); };
+    for (let i = ri(4, 7); i > 0; i--) drop("$", { amt: ri(3, 8) * G.depth + ri(0, 6) });
+    for (let i = ri(1, 2); i > 0; i--) drop("!");
+    if (rand() < .45) drop("?");
+    if (rand() < .6) {
+      const tier = Math.min(Math.floor((G.depth - 1) / 2) + ri(0, 1), 99);
+      if (rand() < .5) drop(")", { tier: Math.min(tier, WEAPONS.length - 1) });
+      else drop("[", { tier: Math.min(tier, ARMORS.length - 1) });
+    }
+    computeFOV();
+  }
+
+  // ---------- helpers ----------
+  const monAt = (x, y) => G.mons.find(m => m.x === x && m.y === y);
+  const itemAt = (x, y) => G.items.find(i => i.x === x && i.y === y);
+  const ftBelow = d => d * 30;
+  function say(t, cls = "") { G.log.push({ t, cls, turn: G.turn }); if (G.log.length > 40) G.log.shift(); }
+  const xpNext = () => Math.floor(10 * Math.pow(1.55, G.p.lvl - 1));
+  const pAtk = () => G.p.atk + (G.p.weapon ? WEAPONS[G.p.weapon.tier][1] : 0);
+  const pDef = () => G.p.def + (G.p.armor ? ARMORS[G.p.armor.tier][1] : 0);
+  const hit = (atk, def) => Math.max(1, atk + ri(-1, 1) - def);
+
+  function computeFOV() {
+    vis = new Set();
+    const { x: px, y: py } = G.p;
+    vis.add(idx(px, py)); G.seen[idx(px, py)] = 1;
+    for (let a = 0; a < 360; a += 1.5) {
+      const r = a * Math.PI / 180, dx = Math.cos(r) * .5, dy = Math.sin(r) * .5;
+      let x = px + .5, y = py + .5;
+      for (let i = 0; i < LIGHT * 2; i++) {
+        x += dx; y += dy;
+        const tx = Math.floor(x), ty = Math.floor(y);
+        if (!inb(tx, ty)) break;
+        const k = idx(tx, ty);
+        vis.add(k); G.seen[k] = 1;
+        if (G.map[k] === "#") break;
+      }
+    }
+    G.mons.forEach(m => { if (vis.has(idx(m.x, m.y))) m.awake = true; });
+    dirty = true;
+  }
+
+  // ---------- turns ----------
+  function act(dx, dy) {
+    if (G.dead) return;
+    const p = G.p;
+    if (dx === 0 && dy === 0) { say("You catch your breath."); return endTurn(true); }
+    const nx = p.x + dx, ny = p.y + dy;
+    const m = monAt(nx, ny);
+    if (m) { attack(m); return endTurn(); }
+    if (!walkable(nx, ny)) return;
+    p.x = nx; p.y = ny;
+    const it = itemAt(nx, ny);
+    if (it) pickUp(it);
+    if (tile(nx, ny) === ">") say("Stairs lead down. Press > to descend.", "magic");
+    endTurn();
+  }
+
+  function attack(m) {
+    const def = MONSTERS[m.k];
+    const crit = rand() < .1;
+    let dmg = hit(pAtk(), def.def) * (crit ? 2 : 1);
+    m.hp -= dmg; m.awake = true;
+    if (m.hp <= 0) {
+      G.mons.splice(G.mons.indexOf(m), 1);
+      G.kills++;
+      say(`You slay the ${def.name}. +${def.xp} xp`, "good");
+      gainXP(def.xp);
+      if (rand() < .25) G.items.push({ x: m.x, y: m.y, k: "$", amt: ri(2, 6) * G.depth });
+    } else {
+      say(`${crit ? "Critical! " : ""}You hit the ${def.name} for ${dmg}.`);
+    }
+  }
+
+  function gainXP(n) {
+    const p = G.p; p.xp += n;
+    while (p.xp >= xpNext()) {
+      p.xp -= xpNext(); p.lvl++;
+      p.max += 6; p.atk += 1; if (p.lvl % 3 === 0) p.def += 1;
+      p.hp = Math.min(p.max, p.hp + Math.ceil(p.max / 2));
+      say(`You reach level ${p.lvl}. You feel tougher.`, "magic");
+    }
+  }
+
+  function pickUp(it) {
+    const p = G.p;
+    G.items.splice(G.items.indexOf(it), 1);
+    if (it.k === "$") { G.gold += it.amt; say(`You pocket ${it.amt} gold.`, "gold"); }
+    if (it.k === "!") { p.potions++; say("You find a healing draught.", "good"); }
+    if (it.k === "?") { p.scrolls++; say("You find a scroll of mapping.", "magic"); }
+    if (it.k === ")") {
+      const [name, bonus] = WEAPONS[it.tier];
+      if (!p.weapon || it.tier > p.weapon.tier) { p.weapon = { tier: it.tier }; say(`You wield the ${name} (+${bonus} atk).`, "gold"); }
+      else say(`A ${name}. Yours is better, so you leave it.`);
+    }
+    if (it.k === "[") {
+      const [name, bonus] = ARMORS[it.tier];
+      if (!p.armor || it.tier > p.armor.tier) { p.armor = { tier: it.tier }; say(`You don the ${name} (+${bonus} def).`, "gold"); }
+      else say(`Some ${name}. Yours is sturdier.`);
+    }
+  }
+
+  function quaff() {
+    if (G.dead) return;
+    const p = G.p;
+    if (!p.potions) return say("You have no potions.");
+    p.potions--;
+    const heal = Math.max(8, Math.ceil(p.max * .45));
+    p.hp = Math.min(p.max, p.hp + heal);
+    say(`The draught burns going down. +${heal} hp`, "good");
+    endTurn();
+  }
+
+  function readScroll() {
+    if (G.dead) return;
+    if (!G.p.scrolls) return say("You have no scrolls.");
+    G.p.scrolls--;
+    G.seen = G.seen.map((s, i) => (s || G.map[i] !== "#" || hasFloorNeighbor(i % W, Math.floor(i / W))) ? 1 : 0);
+    say("The scroll flares. The whole level etches itself into your memory.", "magic");
+    endTurn();
+  }
+  const hasFloorNeighbor = (x, y) => {
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (inb(x + i, y + j) && G.map[idx(x + i, y + j)] !== "#") return true;
+    return false;
+  };
+
+  function tryDescend() {
+    if (G.dead) return;
+    if (tile(G.p.x, G.p.y) !== ">") return say("There are no stairs here.");
+    descend(); render(); sync();
+  }
+
+  function endTurn(rested = false) {
+    G.turn++;
+    const p = G.p;
+    if (rested || G.turn % 6 === 0) p.hp = Math.min(p.max, p.hp + 1);
+    for (const m of [...G.mons]) monsterTurn(m);
+    computeFOV();
+    sync();
+  }
+
+  function monsterTurn(m) {
+    const def = MONSTERS[m.k], p = G.p;
+    if (def.regen && m.hp < m.max) m.hp++;
+    if (!m.awake || G.dead) return;
+    const dx = p.x - m.x, dy = p.y - m.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) === 1) {
+      if (def.erratic && rand() < .4) return wander(m);
+      const dmg = hit(def.atk, pDef());
+      p.hp -= dmg;
+      say(`The ${def.name} hits you for ${dmg}.`, "bad");
+      if (p.hp <= 0) die(`Slain by a ${def.name}`);
+      return;
+    }
+    if (def.erratic && rand() < .5) return wander(m);
+    // greedy step toward the player, trying the best options in order
+    const opts = [];
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      if (!i && !j) continue;
+      const nx = m.x + i, ny = m.y + j;
+      if (!walkable(nx, ny) || monAt(nx, ny) || (nx === p.x && ny === p.y)) continue;
+      opts.push({ nx, ny, d: Math.hypot(p.x - nx, p.y - ny) });
+    }
+    opts.sort((a, b) => a.d - b.d);
+    if (opts.length && opts[0].d < Math.hypot(dx, dy)) { m.x = opts[0].nx; m.y = opts[0].ny; }
+  }
+  function wander(m) {
+    const i = ri(-1, 1), j = ri(-1, 1), nx = m.x + i, ny = m.y + j;
+    if (walkable(nx, ny) && !monAt(nx, ny) && !(nx === G.p.x && ny === G.p.y)) { m.x = nx; m.y = ny; }
+  }
+
+  function die(cause) {
+    G.dead = true; G.cause = cause; G.p.hp = 0;
+    say(`${cause}. Your torch gutters out.`, "bad");
+    const score = scoreOf();
+    let best = 0;
+    try { best = +localStorage.getItem("emberdeep-best") || 0; if (score > best) localStorage.setItem("emberdeep-best", String(score)); } catch (e) {}
+    showDeath(best);
+  }
+  const scoreOf = () => G.gold + G.depth * 100 + G.kills * 10 + G.p.lvl * 25;
+
+  function showDeath(prevBest) {
+    const score = scoreOf();
+    $("deathCause").textContent = `${G.cause} at depth ${G.depth}, ${ftBelow(G.depth)} ft below.`;
+    $("deathTally").textContent = `${G.gold} gold · ${G.kills} slain · level ${G.p.lvl} · ${G.turn} turns · score ${score}`;
+    $("deathBest").textContent = prevBest == null ? "" : score > prevBest ? (prevBest ? `New best. Previous: ${prevBest}.` : "First run on record.") : `Best: ${prevBest}.`;
+    $("veil").hidden = false;
+    $("again").focus();
+  }
+
+  // ---------- rendering ----------
+  let ts = 22, cols = 0, rows = 0, dpr = 1;
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr);
+    ts = r.width < 520 ? 18 : 22;
+    cols = Math.ceil(r.width / ts); rows = Math.ceil(r.height / ts);
+    dirty = true;
+  }
+
+  function camera() {
+    const vw = canvas.width / dpr / ts, vh = canvas.height / dpr / ts;
+    const clampAxis = (pos, view, size) => size <= view ? (size - view) / 2 : Math.max(0, Math.min(size - view, pos + .5 - view / 2));
+    return { ox: clampAxis(G.p.x, vw, W), oy: clampAxis(G.p.y, vh, H) };
+  }
+
+  function render(now = 0) {
+    if (!G) return;
+    const flick = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : Math.sin(now / 130) * .15 + Math.sin(now / 47) * .08;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = C.void;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const { ox, oy } = camera();
+    ctx.font = `500 ${Math.round(ts * .78)}px "IBM Plex Mono", ui-monospace, monospace`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const x0 = Math.floor(ox), y0 = Math.floor(oy);
+    const R = LIGHT + flick;
+
+    for (let y = y0; y <= y0 + rows + 1; y++) for (let x = x0; x <= x0 + cols + 1; x++) {
+      if (!inb(x, y)) continue;
+      const k = idx(x, y);
+      if (!G.seen[k]) continue;
+      const lit = vis.has(k);
+      const sx = (x - ox) * ts, sy = (y - oy) * ts;
+      const d = Math.hypot(x - G.p.x, y - G.p.y);
+      const a = lit ? Math.max(.28, Math.min(1, 1.15 - d / R)) : .16;
+      const t = G.map[k];
+      ctx.globalAlpha = a;
+      if (t === "#") {
+        if (!hasFloorNeighbor(x, y)) continue;
+        ctx.fillStyle = C.stone; ctx.fillRect(sx, sy, ts, ts);
+        ctx.fillStyle = C.stoneHi; ctx.fillRect(sx, sy, ts, 2);
+      } else if (t === ">") {
+        ctx.fillStyle = C.frost; ctx.fillText(">", sx + ts / 2, sy + ts / 2 + 1);
+      } else {
+        if (lit) { ctx.globalAlpha = a * .22; ctx.fillStyle = C.ember; ctx.fillRect(sx, sy, ts, ts); ctx.globalAlpha = a; }
+        ctx.fillStyle = C.mist; ctx.fillText("·", sx + ts / 2, sy + ts / 2);
+      }
+    }
+
+    const drawGlyph = (x, y, ch, col, a = 1) => {
+      const sx = (x - ox) * ts, sy = (y - oy) * ts;
+      ctx.globalAlpha = a; ctx.fillStyle = C.void; ctx.fillRect(sx + 1, sy + 1, ts - 2, ts - 2);
+      ctx.fillStyle = col; ctx.fillText(ch, sx + ts / 2, sy + ts / 2 + 1);
+    };
+    const ITEM_COL = { "$": C.ember, "!": C.blood, "?": C.frost, ")": C.ink, "[": C.ink };
+    G.items.forEach(it => {
+      const k = idx(it.x, it.y);
+      if (vis.has(k)) drawGlyph(it.x, it.y, it.k, ITEM_COL[it.k], Math.max(.4, 1.15 - Math.hypot(it.x - G.p.x, it.y - G.p.y) / R));
+      else if (G.seen[k]) drawGlyph(it.x, it.y, it.k, C.mist, .25);
+    });
+    G.mons.forEach(m => {
+      if (!vis.has(idx(m.x, m.y))) return;
+      const def = MONSTERS[m.k];
+      drawGlyph(m.x, m.y, def.ch, def.col);
+      if (m.hp < m.max) {
+        const sx = (m.x - ox) * ts, sy = (m.y - oy) * ts;
+        ctx.globalAlpha = 1; ctx.fillStyle = C.stone; ctx.fillRect(sx + 2, sy + ts - 3, ts - 4, 2);
+        ctx.fillStyle = C.blood; ctx.fillRect(sx + 2, sy + ts - 3, (ts - 4) * Math.max(0, m.hp / m.max), 2);
+      }
+    });
+
+    // torch glow around the player
+    const px = (G.p.x - ox + .5) * ts, py = (G.p.y - oy + .5) * ts;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, ts * R);
+    g.addColorStop(0, "rgba(240,162,59,.16)"); g.addColorStop(1, "rgba(240,162,59,0)");
+    ctx.globalAlpha = 1; ctx.fillStyle = g; ctx.fillRect(px - ts * R, py - ts * R, ts * R * 2, ts * R * 2);
+    drawGlyph(G.p.x, G.p.y, "@", G.dead ? C.mist : C.ember);
+    ctx.globalAlpha = 1;
+  }
+
+  function sync() {
+    const p = G.p;
+    $("depth").innerHTML = `Depth <b>${G.depth}</b> · ${ftBelow(G.depth)} ft below`;
+    $("hpFill").style.width = `${Math.max(0, p.hp / p.max) * 100}%`;
+    $("hpText").textContent = `${Math.max(0, p.hp)}/${p.max}`;
+    $("xpFill").style.width = `${(p.xp / xpNext()) * 100}%`;
+    $("xpText").textContent = `${p.xp}/${xpNext()}`;
+    $("sLvl").textContent = p.lvl; $("sAtk").textContent = pAtk(); $("sDef").textContent = pDef(); $("sGold").textContent = G.gold;
+    $("kWeapon").textContent = p.weapon ? WEAPONS[p.weapon.tier][0] : "bare fists";
+    $("kArmor").textContent = p.armor ? ARMORS[p.armor.tier][0] : "rags";
+    $("kKills").textContent = G.kills;
+    $("nPot").textContent = p.potions; $("nScr").textContent = p.scrolls;
+    $("bQuaff").disabled = !p.potions || G.dead;
+    $("bRead").disabled = !p.scrolls || G.dead;
+    $("bDown").disabled = tile(p.x, p.y) !== ">" || G.dead;
+    $("seed").textContent = `Seed ${G.seed}`;
+    const log = $("log"); log.innerHTML = "";
+    G.log.slice(-8).forEach(e => {
+      const el = document.createElement("p");
+      if (e.turn >= G.turn - 1) el.classList.add("new");
+      if (e.cls) el.classList.add(e.cls);
+      el.textContent = e.t; log.appendChild(el);
+    });
+    dirty = true;
+  }
+
+  // ---------- input ----------
+  const KEYMAP = {
+    ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+    w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
+    k: [0, -1], j: [0, 1], h: [-1, 0], l: [1, 0],
+    y: [-1, -1], u: [1, -1], b: [-1, 1], n: [1, 1],
+    ".": [0, 0], " ": [0, 0]
+  };
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.tagName === "BUTTON" && (e.key === " " || e.key === "Enter")) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (G.dead) { if (key === "n" || key === "Enter") { e.preventDefault(); newGame(); sync(); } return; }
+    if (e.key === ">") { e.preventDefault(); return tryDescend(); }
+    if (key === "q") return quaff();
+    if (key === "r") return readScroll();
+    if (e.shiftKey && key === "n") { newGame(); return sync(); }
+    const d = KEYMAP[key];
+    if (d) { e.preventDefault(); act(d[0], d[1]); }
+  });
+
+  canvas.addEventListener("pointerdown", e => {
+    canvas.focus();
+    if (G.dead) return;
+    const r = canvas.getBoundingClientRect();
+    const { ox, oy } = camera();
+    const tx = (e.clientX - r.left) / ts + ox, ty = (e.clientY - r.top) / ts + oy;
+    const dx = tx - (G.p.x + .5), dy = ty - (G.p.y + .5);
+    if (Math.abs(dx) < .6 && Math.abs(dy) < .6) return tile(G.p.x, G.p.y) === ">" ? tryDescend() : act(0, 0);
+    const ang = Math.atan2(dy, dx), oct = Math.round(ang / (Math.PI / 4));
+    const dirs = { 0: [1, 0], 1: [1, 1], 2: [0, 1], 3: [-1, 1], 4: [-1, 0], "-4": [-1, 0], "-3": [-1, -1], "-2": [0, -1], "-1": [1, -1] };
+    const d = dirs[oct]; act(d[0], d[1]);
+  });
+
+  document.querySelectorAll(".pad button").forEach(b => b.addEventListener("click", () => {
+    const [dx, dy] = b.dataset.d.split(",").map(Number); act(dx, dy);
+  }));
+  $("bQuaff").addEventListener("click", quaff);
+  $("bRead").addEventListener("click", readScroll);
+  $("bDown").addEventListener("click", tryDescend);
+  $("bNew").addEventListener("click", () => { newGame(); sync(); canvas.focus(); });
+  $("again").addEventListener("click", () => { newGame(); sync(); canvas.focus(); });
+
+  // ---------- boot ----------
+  function loop(now) { render(now); requestAnimationFrame(loop); }
+  function start(data) {
+    if (data && data.G) { G = data.G; } else newGame();
+    resize(); computeFOV(); sync();
+    if (G.dead) showDeath(null);
+    requestAnimationFrame(loop);
+  }
+  window.addEventListener("resize", resize);
+  window.claude?.hot?.snapshot?.(() => ({ G }));
+  window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+})();
+</script>
